@@ -43,7 +43,7 @@ def test_fading():
     mod.set_value(time=2, channel=74, value=255)
     mod.set_value(time=2.1, channel=74, value=0, easing="sudden")
     mod.set_value(time=4, channel=74, value=60)
-    mod.set_value(time=5, channel=73, value=20)
+    mod.set_value(time=5, channel=73, value=255, easing="ease_in_out")
     mod.execute()
     mod.runner.join()
     assert False

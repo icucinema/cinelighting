@@ -29,7 +29,6 @@ class DmxModificationRunner(threading.Thread):
         time_relative = min(time_now - self.started, self.duration) # cap this to the duration
 
         step_channels = self.step_at(time_relative)
-        print time_relative, step_channels
         self.controller.set_channels(step_channels)
 
         return time_relative >= self.duration
@@ -58,8 +57,27 @@ class DmxModificationRunner(threading.Thread):
         self.channel_time_stops = channel_time_stops
 
     def calculate_easing(self, easing_type, percentage, last_val, next_val):
-        if easing_type == "linear":
-            return last_val + ((next_val - last_val) * percentage)
+        diff = next_val - last_val
+
+        if easing_type == "ease_in_out":
+            if percentage < 0.5:
+                easing_type = "ease_in"
+                percentage *= 2
+                next_val = last_val + (diff/2)
+            else:
+                easing_type = "ease_out"
+                percentage = (percentage * 2) - 1
+                last_val += (diff/2)
+            diff = next_val - last_val
+
+        if callable(easing_type):
+            easing_type(percentage=percentage, last_val=last_val, next_val=next_val)
+        elif easing_type == "linear":
+            return last_val + (diff * percentage)
+        elif easing_type == "ease_in":
+            return last_val + (diff * pow(percentage, 2))
+        elif easing_type == "ease_out":
+            return last_val + (diff * (1-pow(1-percentage, 2)))
         elif easing_type == "sudden":
             # to use this easing type, you should put a stop 0.1 second before this
             # with the LAST value
@@ -117,7 +135,6 @@ class DmxModification(object):
         pointdict = self.time_values.setdefault(time, {}).setdefault(channel, {})
         pointdict["value"] = value
         pointdict["easing"] = easing
-        # space for future expansion - could stick an easing function in that dict
 
     def lock(self):
         assert not self.locked
