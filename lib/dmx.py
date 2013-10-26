@@ -13,12 +13,16 @@ DMX_MOD_DEFAULT_INTERVAL = 0.1
 
 DMX_MANOLATOR_INTERVAL = 0.1
 
+VERSION = 0.1
 
 class DmxModificationRunner(threading.Thread):
     def __init__(self, controller, modification, interval=DMX_MOD_DEFAULT_INTERVAL):
         self.controller = controller
         self.modification = modification
         self.interval = interval
+
+        self.has_run = False
+        self.callbacks = []
 
         self.calculate_values()
 
@@ -43,6 +47,16 @@ class DmxModificationRunner(threading.Thread):
             if self.step():
                 break
             time.sleep(self.interval)
+        self.has_run = True
+        for func in self.callbacks:
+            func(self)
+
+    def when_done(self, func):
+        if self.has_run:
+            func(self)
+        else:
+            self.callbacks.append(func)
+        return self
 
     def calculate_values(self):
         # calculate values
@@ -131,6 +145,7 @@ class DmxModification(object):
         """Shorthand for BaseDmxController.execute_change"""
         assert self.controller
         self.controller.execute_change(self, *args, **kwargs)
+        return self
 
     def set(self, time, channel, value, easing="linear"):
         assert not self.locked
@@ -145,7 +160,6 @@ class DmxModification(object):
     def lock(self):
         assert not self.locked
         self.locked = True
-
 
 
 
@@ -248,7 +262,7 @@ class BaseDmxController(object):
 
 class ManolatorDmxController(BaseDmxController):
     def __init__(self, parallel, default_value=0, *args, **kwargs):
-        self.live_channels = dict((c, None) for c in range(DMX_MIN_CHANNEL, DMX_MAX_CHANNEL))
+        self.live_channels = dict((c, None) for c in range(DMX_MIN_CHANNEL, DMX_MAX_CHANNEL+1))
         self.live_channels_cv = threading.Condition()
         self.this_round_data = {}
 
@@ -285,13 +299,13 @@ class ManolatorDmxController(BaseDmxController):
 
                     max_channel = self.max_channel
                     if len(self.this_round_data) != 0:
-                        max_channel = min(max_channel, max(self.this_round_data.keys())+1)
+                        max_channel = min(max_channel, max(self.this_round_data.keys()))
 
                     p.setData(0)
                     p.setAutoFeed(1)
                     time.sleep(0.1)
                     p.setAutoFeed(0)
-                    for channel in range(self.min_channel, max_channel):
+                    for channel in range(self.min_channel, max_channel+1):
                         val = self.live_channels[channel]
                         p.setData(self.channel_default_value if val is None else val)
                         p.setDataStrobe(1)
@@ -320,7 +334,7 @@ class ManolatorDmxController(BaseDmxController):
             for channel in channel_set:
                 output[channel] = self.live_channels[channel]
                 if output[channel] is None:
-                    raise ValueError("Cannot read channel '%r' - has not been previously set" % (channel,))
+                    output[channel] = self.channel_default_value
 
         return output
 
