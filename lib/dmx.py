@@ -9,9 +9,13 @@ DMX_MAX_VALUE = 255
 DMX_MIN_CHANNEL = 1
 DMX_MAX_CHANNEL = 256
 
+DMX_MOD_DEFAULT_INTERVAL = 0.1
+
+DMX_MANOLATOR_INTERVAL = 0.1
+
 
 class DmxModificationRunner(threading.Thread):
-    def __init__(self, controller, modification, interval=0.1):
+    def __init__(self, controller, modification, interval=DMX_MOD_DEFAULT_INTERVAL):
         self.controller = controller
         self.modification = modification
         self.interval = interval
@@ -123,18 +127,20 @@ class DmxModification(object):
         self.using_channels = set()
         self.time_values = {}
 
-    def execute(self):
+    def execute(self, *args, **kwargs):
         """Shorthand for BaseDmxController.execute_change"""
         assert self.controller
-        self.controller.execute_change(self)
+        self.controller.execute_change(self, *args, **kwargs)
 
-    def set_value(self, time, channel, value, easing="linear"):
+    def set(self, time, channel, value, easing="linear"):
         assert not self.locked
 
         self.using_channels.add(channel)
         pointdict = self.time_values.setdefault(time, {}).setdefault(channel, {})
         pointdict["value"] = value
         pointdict["easing"] = easing
+
+        return self
 
     def lock(self):
         assert not self.locked
@@ -202,12 +208,12 @@ class BaseDmxController(object):
 
         return self._get_channels(channel_check)
 
-    def new_change(self):
-        return DmxModification(self)
+    def new_change(self, *args, **kwargs):
+        return DmxModification(self, *args, **kwargs)
 
-    def execute_change(self, modification):
+    def execute_change(self, modification, *args, **kwargs):
         modification.lock()
-        modification.runner = DmxModificationRunner(self, modification)
+        modification.runner = DmxModificationRunner(self, modification, *args, **kwargs)
         modification.runner.start()
 
 
@@ -243,14 +249,13 @@ class BaseDmxController(object):
 class ManolatorDmxController(BaseDmxController):
     def __init__(self, parallel, default_value=0, *args, **kwargs):
         self.live_channels = dict((c, None) for c in range(DMX_MIN_CHANNEL, DMX_MAX_CHANNEL))
-        self.live_channels_lock = threading.Lock()
+        self.live_channels_cv = threading.Condition()
+        self.this_round_data = {}
 
         self.channel_default_value = default_value
 
         self.parallel = parallel
         self.parallel_keep_going = False
-
-        self.sleep_in_send = False
 
         super(ManolatorDmxController, self).__init__(*args, **kwargs)
 
@@ -275,21 +280,22 @@ class ManolatorDmxController(BaseDmxController):
         # pySerial parallel in p
         try:
             while self.parallel_keep_going:
-                p.setData(0)
-                p.setAutoFeed(1)
-                time.sleep(0.1)
-                p.setAutoFeed(0)
-                for channel in range(self.min_channel, self.max_channel):
-                    val = self.live_channels[channel]
-                    p.setData(self.channel_default_value if val is None else val)
-                    p.setDataStrobe(1)
-                    self.sleep_in_send and time.sleep(0.01)  # Not usually necessary
-                    p.setDataStrobe(0)
-                    self.sleep_in_send and time.sleep(0.01)  # Not usually necessary
-                    p.setData(0)
+                with self.live_channels_cv:
+                    self.live_channels_cv.wait(1)
 
-                # now take a nap
-                time.sleep(0.1)
+                    max_channel = self.max_channel
+                    if len(self.this_round_data) != 0:
+                        max_channel = min(max_channel, max(self.this_round_data.keys())+1)
+
+                    p.setData(0)
+                    p.setAutoFeed(1)
+                    time.sleep(0.1)
+                    p.setAutoFeed(0)
+                    for channel in range(self.min_channel, max_channel):
+                        val = self.live_channels[channel]
+                        p.setData(self.channel_default_value if val is None else val)
+                        p.setDataStrobe(1)
+                        p.setDataStrobe(0)
         finally:
             self.parallel_keep_going = False
             self.parallel_ending_event.set()
@@ -299,16 +305,18 @@ class ManolatorDmxController(BaseDmxController):
         if self.has_started and not self.parallel_keep_going:
             raise RuntimeError("Parallel port has died!")
 
-        with self.live_channels_lock:
+        with self.live_channels_cv:
             for channel, value in channel_set.iteritems():
                 self.live_channels[channel] = value
+                self.this_round_data[channel] = value
+            self.live_channels_cv.notify_all()
 
     def _get_channels(self, channel_set):
         if self.has_started and not self.parallel_keep_going:
             raise RuntimeError("Parallel port has died!")
 
         output = {}
-        with self.live_channels_lock:
+        with self.live_channels_cv:
             for channel in channel_set:
                 output[channel] = self.live_channels[channel]
                 if output[channel] is None:

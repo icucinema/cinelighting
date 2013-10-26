@@ -37,13 +37,14 @@ def test_start():
     assert not mn.parallel_update_thread.is_alive()
 
 def test_fading():
+    factor = 0.01
+
     dmdmx = dmx.DummyDmxController()
     mod = dmdmx.new_change()
-    mod.set_value(time=0, channel=73, value=0)
-    mod.set_value(time=2, channel=74, value=255)
-    mod.set_value(time=2.1, channel=74, value=0, easing="sudden")
-    mod.set_value(time=4, channel=74, value=60)
-    mod.set_value(time=5, channel=73, value=255, easing="ease_in_out")
-    mod.execute()
+    mod.set(time=0*factor, channel=73, value=0)
+    mod.set(time=2*factor, channel=74, value=255)
+    mod.set(time=2.1*factor, channel=74, value=0, easing="sudden")
+    mod.set(time=4*factor, channel=74, value=60)
+    mod.set(time=5*factor, channel=73, value=255, easing="ease_in_out")
+    mod.execute(interval=factor*0.1)
     mod.runner.join()
-    assert False
