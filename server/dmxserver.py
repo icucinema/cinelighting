@@ -33,6 +33,7 @@ class DmxCommandParser(object):
         (r'^(c|set) (?P<channel>[0-9]+):(?P<value>[0-9]+)$', 'command_set_channel'),
 
         (r'^f (?P<channel>[0-9]+)(:(?P<from_value>[0-9]+))?:(?P<to_value>[0-9]+):(?P<seconds>[0-9]+)(:(?P<block>[YN]))?$', 'command_fade_channel'),
+        (r'^startfade$', 'command_startfade'),
 
         (r'^getm( (?P<channels>([0-9]+,)*[0-9]+))?$', 'command_get_channels'),
         (r'^setm (?P<channels>([0-9]+:[0-9]+,)*[0-9]+:[0-9]+)?$', 'command_set_channels'),
@@ -45,24 +46,69 @@ class DmxCommandParser(object):
         (r'^q$', 'command_exit'),
     ]
 
+    fading_commands = [
+        (r'^execute$', 'fading_execute'),
+        (r'^cancel$', 'fading_cancel'),
+        (r'^(?P<time>[0-9]+):(?P<channel>[0-9]+):(?P<value>[0-9]+)(:(?P<easing>[a-zA-Z_]+))?', 'fading_add'),
+
+        (r'^bye$', 'command_exit'),
+        (r'^exit$', 'command_exit'),
+        (r'^quit$', 'command_exit'),
+        (r'^q$', 'command_exit'),
+    ]
+
+    MODE_NORMAL = 0
+    MODE_FADING = 1
+
     def __init__(self, dmx, handler):
         self.dmx = dmx
         self.handler = handler
-        self.preprocess_commands(self.commands)
+        self.commands = self.preprocess_commands(self.commands)
+        self.fading_commands = self.preprocess_commands(self.fading_commands)
+
+        self.mode = self.MODE_NORMAL
+        self.data = {}
 
     def preprocess_commands(self, commands):
         cmds = []
         for command, func in commands:
             cmds.append((re.compile(command), getattr(self, func)))
-        self.commands = cmds
         return cmds
 
     def process_command(self, sock_input):
-        for command, func in self.commands:
+        cmdset = self.commands
+        if self.mode == self.MODE_FADING:
+            cmdset = self.fading_commands
+
+        for command, func in cmdset:
             res = command.match(sock_input)
             if res:
                 return func(**res.groupdict())
+
         raise DmxCommandInvalid()
+
+    def command_startfade(self):
+        self.mode = self.MODE_FADING
+        self.data['fade'] = self.dmx.new_change()
+        return "FADE CREATION MODE"
+
+    def fading_execute(self):
+        c = self.data['fade']
+        c.execute()
+        command_id = self.handler.get_async_command_id()
+        c.runner.when_done(lambda _: self.handler.async_done(command_id))
+        raise DmxCommandAsync(command_id)
+
+    def fading_cancel(self):
+        self.data['fade'] = None
+        self.mode = self.MODE_NORMAL
+        return
+
+    def fading_add(self, time, channel, value, easing='linear'):
+        if easing is None:
+            easing = 'linear'
+        time, channel, value = safe_int(time), safe_int(channel), safe_int(value)
+        self.data['fade'].set(time, channel, value, easing)
 
     def command_fade_channel(self, channel, to_value, seconds, from_value=None, block='N'):
         ch, to_val = safe_int(channel), safe_int(to_value)
