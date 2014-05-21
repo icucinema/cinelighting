@@ -297,15 +297,11 @@ class ManolatorDmxController(BaseDmxController):
                 with self.live_channels_cv:
                     self.live_channels_cv.wait(1)
 
-                    max_channel = self.max_channel
-                    if len(self.this_round_data) != 0:
-                        max_channel = min(max_channel, max(self.this_round_data.keys()))
-
                     p.setData(0)
                     p.setAutoFeed(1)
                     time.sleep(0.1)
                     p.setAutoFeed(0)
-                    for channel in range(self.min_channel, max_channel+1):
+                    for channel in range(0, self.max_channel):
                         val = self.live_channels[channel]
                         p.setData(self.channel_default_value if val is None else val)
                         p.setDataStrobe(1)
